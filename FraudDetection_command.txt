@@ -1,0 +1,88 @@
+// Observation
+// csv file inserted to MySQL contains 500,000 records    (20,000,000 - 20,500,000)
+// There are 400 json log files. Each file contains 500,000 records. Total records = 2,000,000  (20,500,001-22,500,000)
+// Huge json file contains 20,000,000 records (0-20,000,000)
+
+Assume we are in dataset dir
+head FILENAME
+tail FILENAME
+head -2 FILENAME   				// view first 2 lines from this FILE
+head -100 FILENAME | tail -5    // view lines 95-100
+
+du -h   // view size (human)
+
+
+hadoop fs -put huge_json_data /user/training	// ingest 3.0GB folder to HDFS
+hadoop fs -put json_log_data /user/training	    // ingest 300MB folder to HDFS
+
+mysql --user=root --password=password < hadoop_proj_db.sql 		// IMPORT SQL FILE (CONTAIN SCHEMA AND RECORDS) TO MYSQL 
+mysql --user=root --password=password hadoop_project_db			// USE DATABASE hadoop_project_db
+SELECT * FROM train_data_tbl LIMIT 10  // SHOW RECORDS (Checking..)
+
+
+// Installing SQOOP
+In dataset.rar copy cdh506.repo to linux VM
+Then move cdh506.repo to /etc/yum.repos.d/
+mv cdh506.repo /etc/yum.repos.d/
+sudo yum repolist
+sudo yum install sqoop
+
+// Mysql java connector
+Extract the downloaded and you will get mysql-connector-java-5.1.40-bin.jar
+sudo mv mysql-connector-java-5.1.40-bin.jar /var/lib/sqoop/
+
+
+// Try to use Sqoop  .show databases
+sqoop list-databases --connect jdbc:mysql://localhost:3306 --username root --password password
+sqoop list-tables --connect jdbc:mysql://localhost:3306/hadoop_project_db --username root --password password
+
+// Import to HDFS into csv
+sqoop import --connect jdbc:mysql://localhost:3306/hadoop_project_db --table train_data_tbl --target-dir /user/training/sqlRecordsCsv 
+--username root --password password  --fields-terminated-by ,
+// We will get 4 csv file in HDFS. Each file contains 125,000 records , total = 500,000
+
+// Installing pig
+https://www.tutorialspoint.com/apache_pig/apache_pig_installation.htm
+// config Apache Pig
+. ~/.bashrc
+nano ~/.bashrc  // It is a hidden file in home directory
+export PIG_HOME=/home/training/pig
+PATH=$PATH:$PIG_HOME/bin
+export PIG_CLASSPATH=/etc/hadoop/coif
+//
+
+sudo yum install -y ant
+sudo yum install ant-junit
+ant -Dhadoopversion=23 jar
+//ivy-resolve took 7 minutes
+
+
+// PIG	
+loadJson = LOAD '/user/training/huge_json_data/train_data_1.json' 
+USING JsonLoader('id:chararray,timestamp:chararray,channel:chararray,userid:chararray,action:chararray,amount:INT,location:chararray');
+
+STORE loadJson2 INTO '/user/training/testDataCsv' USING org.apache.pig.piggybank.storage.CSVExcelStorage();
+
+loadJson = LOAD '/user/training/json_log_data/json_logaa' 
+USING JsonLoader('timestamp:chararray,userid:chararray,amount:INT,location:chararray,action:chararray,id:chararray,channel:chararray');
+
+sudo find / | grep piggybank.jar
+register '/home/training/pig-0.16.0/lib/piggybank.jar';
+  define CSVLoader org.apache.pig.piggybank.storage.CSVLoader();
+
+loadJson = LOAD '/user/training/json_log_data' USING JsonLoader('timestamp:chararray,userid:chararray,amount:INT,location:chararray,action:chararray,id:chararray,channel:chararray');
+loadJson2 = FOREACH loadJson GENERATE id,timestamp,channel,userid,action,amount,location;
+register '/home/training/pig-0.16.0/lib/piggybank.jar';
+define CSVLoader org.apache.pig.piggybank.storage.CSVLoader();
+STORE loadJson2 INTO '/user/training/pig_csv/pigJsonCsv' USING org.apache.pig.piggybank.storage.CSVExcelStorage();
+
+top // check memory
+//RemoteException -Disk , DataStreamerException -Mem
+sudo -u hdfs hadoop dfsadmin -report //check disk space
+
+sudo cat /var/log/impala/impala-server.log 
+sudo cp -r conf.dist/ conf
+sudo nano /etc/init.d/impala-catalog  ,server ,state-store
+
+
+hadoop dfs -copyToLocal <input> <output>
